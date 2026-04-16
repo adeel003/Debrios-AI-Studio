@@ -26,35 +26,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const bootstrapped = useRef(false);
+  const mountedRef = useRef(true);
 
-  // Ref so onAuthStateChange closure always sees the current profile
-  // without being stale (the effect runs with [] deps).
+  // Tracks the current profile without stale closure issues.
   const profileRef = useRef<UserProfile | null>(null);
 
-  // Deduplication: if a fetch is already in-flight, callers share it.
-  // IMPORTANT: must be cleared on timeout in the *outer* catch, not only
-  // inside the inner promise's finally — see the comment below.
+  // Incremented on every new fetch. Used to discard stale responses when a
+  // newer fetch completes before an older in-flight one.
+  const fetchCounter = useRef(0);
+
+  // In-flight promise deduplication. Callers share the same promise when one
+  // is already running. Cleared in the outer catch (timeout) AND inner finally
+  // (normal settle) — whichever fires first wins; the second is a no-op.
   const profileFetchPromise = useRef<Promise<UserProfile | null> | null>(null);
+
+  // Prevent state updates after unmount.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const fetchProfile = useCallback(async (
     userId: string,
     email: string | undefined,
     silent = false,
+    force = false,
   ): Promise<UserProfile | null> => {
+    // Dedup: same user's profile is already loaded — nothing to do.
+    if (!force && profileRef.current?.id === userId) {
+      console.log('[AuthContext] fetchProfile skipped — profile already loaded for userId:', userId);
+      return profileRef.current;
+    }
+
+    // Dedup: a fetch is already in-flight — share it.
     if (profileFetchPromise.current) {
+      console.log('[AuthContext] fetchProfile deduped — returning in-flight promise');
       return profileFetchPromise.current;
     }
 
-    if (!silent) setProfileLoading(true);
-    setError(null);
+    const thisFetch = ++fetchCounter.current;
+    console.log('[AuthContext] fetchProfile start', { userId, thisFetch });
 
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => {
+    if (!silent && mountedRef.current) setProfileLoading(true);
+    if (mountedRef.current) setError(null);
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
         const err = new Error('Profile fetch timeout');
         (err as any).isTimeout = true;
         reject(err);
-      }, 8000),
-    );
+      }, 8000);
+    });
 
     const profilePromise = (async (): Promise<UserProfile | null> => {
       try {
@@ -137,8 +163,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         return userProfile;
       } finally {
-        // Always clear when the inner fetch settles (success, error, or after
-        // the outer timeout already cleared it — that's a harmless no-op).
+        // Clear in-flight ref when the inner promise settles. If the outer
+        // catch (timeout path) already cleared it, this is a harmless no-op.
         profileFetchPromise.current = null;
       }
     })();
@@ -147,33 +173,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const result = await Promise.race([profilePromise, timeoutPromise]);
-      profileRef.current = result;
-      setProfile(result);
-      return result;
-    } catch (err: any) {
-      // BUG FIX: clear the ref here, not only inside profilePromise.finally.
-      // When the timeout wins the race, profilePromise is still running in the
-      // background and will clear the ref eventually — but until then, any
-      // subsequent fetchProfile call would return the hanging promise with NO
-      // new timeout, causing an indefinite hang.
-      profileFetchPromise.current = null;
 
-      if (err.isTimeout) {
-        console.error('[AuthContext] Profile fetch timed out — likely RLS or connection pool issue. Check Supabase logs for a stalled /rest/v1/profiles request.');
-      } else if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
-        setError('Network error: Unable to connect to the backend. Please check your internet connection.');
-      } else {
-        console.error('[AuthContext] fetchProfile failed:', err);
-        setError(err.message || 'An error occurred during initialization.');
+      // Stale-response guard: a newer fetch superseded this one.
+      if (fetchCounter.current !== thisFetch) {
+        console.log('[AuthContext] fetchProfile stale result discarded', { thisFetch, current: fetchCounter.current });
+        return null;
       }
 
-      profileRef.current = null;
-      setProfile(null);
+      console.log('[AuthContext] fetchProfile success', { userId, hasProfile: !!result });
+
+      if (mountedRef.current) {
+        profileRef.current = result;
+        setProfile(result);
+      }
+      return result;
+    } catch (err: any) {
+      // Clear immediately so the next call can start a fresh fetch with its
+      // own timeout, rather than receiving the hanging inner promise.
+      profileFetchPromise.current = null;
+
+      if (fetchCounter.current !== thisFetch) {
+        return null; // stale — newer fetch already owns state
+      }
+
+      if (err.isTimeout) {
+        console.error('[AuthContext] Profile fetch timed out — likely RLS or connection pool issue. Check Supabase API logs for a stalled /rest/v1/profiles request.');
+      } else if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+        if (mountedRef.current) setError('Network error: Unable to connect to the backend. Please check your internet connection.');
+      } else {
+        console.error('[AuthContext] fetchProfile failed:', err);
+        if (mountedRef.current) setError(err.message || 'An error occurred during initialization.');
+      }
+
+      if (mountedRef.current) {
+        profileRef.current = null;
+        setProfile(null);
+      }
       return null;
     } finally {
-      setProfileLoading(false);
+      // Always cancel the timeout timer — prevents a dangling rejection if the
+      // fetch resolved before the 8s window elapsed.
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      if (mountedRef.current) setProfileLoading(false);
     }
-  }, []); // stable — only uses refs and state setters
+  }, []); // stable — only accesses refs and state setters
 
   useEffect(() => {
     if (bootstrapped.current) return;
@@ -184,7 +227,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const completeInitialBoot = () => {
       if (initialBootDone) return;
       initialBootDone = true;
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     };
 
     const bootTimeout = setTimeout(() => {
@@ -192,37 +235,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, 20_000);
 
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+      if (!mountedRef.current) return;
+
       setSession(initialSession);
       setUser(initialSession?.user ?? null);
 
       if (initialSession?.user) {
+        // Skip fetch if profile is already loaded for this user (e.g. hot-reload).
+        if (profileRef.current?.id === initialSession.user.id) {
+          completeInitialBoot();
+          return;
+        }
         fetchProfile(initialSession.user.id, initialSession.user.email).finally(completeInitialBoot);
       } else {
         completeInitialBoot();
       }
     }).catch(err => {
       console.error('[AuthContext] getSession error:', err);
-      setError('Failed to initialize session. Please try again.');
+      if (mountedRef.current) setError('Failed to initialize session. Please try again.');
       completeInitialBoot();
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       // TOKEN_REFRESHED is pure JWT rotation — the profiles row is unchanged.
-      // Fetching here is wasteful and, combined with the promise-dedup bug,
-      // was the primary trigger for the intermittent infinite hang.
+      // Triggering a fetch here was the primary cause of the intermittent hang.
       if (event === 'TOKEN_REFRESHED') {
-        setSession(newSession);
+        if (mountedRef.current) setSession(newSession);
         completeInitialBoot();
         return;
       }
+
+      if (!mountedRef.current) return;
 
       setSession(newSession);
       setUser(newSession?.user ?? null);
 
       if (newSession?.user) {
-        // Use profileRef (not the closed-over `profile` state) so we always
-        // read the current value, not the stale mount-time value.
-        const currentProfile = profileRef.current;
+        const currentProfile = profileRef.current; // live value, not stale closure
         const needsFetch =
           event === 'SIGNED_IN' ||
           event === 'USER_UPDATED' ||
@@ -247,9 +296,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [fetchProfile]);
 
   const signOut = useCallback(async () => {
-    setError(null);
+    if (mountedRef.current) setError(null);
 
     const safetyTimeout = setTimeout(() => {
+      if (!mountedRef.current) return;
       profileRef.current = null;
       setUser(null);
       setSession(null);
@@ -260,20 +310,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       await supabase.auth.signOut();
-      profileRef.current = null;
-      setUser(null);
-      setSession(null);
-      setProfile(null);
-      setLoading(false);
-      setProfileLoading(false);
+      if (mountedRef.current) {
+        profileRef.current = null;
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        setLoading(false);
+        setProfileLoading(false);
+      }
     } catch (err: any) {
-      profileRef.current = null;
-      setUser(null);
-      setSession(null);
-      setProfile(null);
-      setLoading(false);
-      setProfileLoading(false);
-      setError(err.message || 'Failed to sign out');
+      if (mountedRef.current) {
+        profileRef.current = null;
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        setLoading(false);
+        setProfileLoading(false);
+        setError(err.message || 'Failed to sign out');
+      }
     } finally {
       clearTimeout(safetyTimeout);
     }
@@ -281,8 +335,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     if (user) {
-      profileFetchPromise.current = null; // force a fresh fetch on manual refresh
-      await fetchProfile(user.id, user.email);
+      // Clear both guards so fetchProfile starts a fresh request unconditionally.
+      profileFetchPromise.current = null;
+      await fetchProfile(user.id, user.email, false, true);
     }
   }, [user, fetchProfile]);
 
