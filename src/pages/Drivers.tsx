@@ -57,6 +57,7 @@ const emptyForm = {
   license_number: '',
   iqama_number: '',
   iqama_expiry: '',
+  mvpi_expiry: '',
   route_permit_expiry: '',
   driver_card_expiry: '',
   driver_license_expiry: '',
@@ -153,6 +154,7 @@ export function Drivers() {
         license_number: driver.license_number || '',
         iqama_number: driver.iqama_number || '',
         iqama_expiry: driver.iqama_expiry || '',
+        mvpi_expiry: (driver as any).mvpi_expiry || '',
         route_permit_expiry: driver.route_permit_expiry || '',
         driver_card_expiry: driver.driver_card_expiry || '',
         driver_license_expiry: driver.driver_license_expiry || '',
@@ -173,17 +175,22 @@ export function Drivers() {
     setIsSubmitting(true);
     const toastId = toast.loading(editingDriver ? 'Updating driver…' : 'Adding driver…');
     try {
+      const payload: any = { ...formData };
+      // Convert empty date strings to null so Postgres doesn't reject them
+      ['iqama_expiry', 'mvpi_expiry', 'route_permit_expiry', 'driver_card_expiry', 'driver_license_expiry']
+        .forEach((k) => { if (payload[k] === '') payload[k] = null; });
+
       if (editingDriver) {
         const { error: err } = await supabase
           .from('drivers')
-          .update({ ...formData, updated_at: new Date().toISOString() })
+          .update({ ...payload, updated_at: new Date().toISOString() })
           .eq('id', editingDriver.id);
         if (err) throw err;
         toast.success('Driver updated', { id: toastId });
       } else {
         const { error: err } = await supabase
           .from('drivers')
-          .insert([{ ...formData, tenant_id: profile.tenant_id }]);
+          .insert([{ ...payload, tenant_id: profile.tenant_id }]);
         if (err) throw err;
         toast.success('Driver added', { id: toastId });
       }
@@ -371,6 +378,7 @@ export function Drivers() {
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Compliance</p>
                     <div className="grid grid-cols-2 gap-2">
                       <ComplianceBadge label="Iqama" date={driver.iqama_expiry} />
+                      <ComplianceBadge label="MVPI" date={(driver as any).mvpi_expiry} />
                       <ComplianceBadge label="Route Permit" date={driver.route_permit_expiry} />
                       <ComplianceBadge label="Driver Card" date={driver.driver_card_expiry} />
                       <ComplianceBadge label="License" date={driver.driver_license_expiry} />
@@ -467,6 +475,13 @@ export function Drivers() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                     value={formData.iqama_expiry}
                     onChange={e => setFormData({ ...formData, iqama_expiry: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">MVPI Expiry</label>
+                  <input type="date"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    value={formData.mvpi_expiry}
+                    onChange={e => setFormData({ ...formData, mvpi_expiry: e.target.value })} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Route Permit Expiry *</label>

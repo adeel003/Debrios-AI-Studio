@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Database as DatabaseIcon, Plus, AlertCircle, X, ChevronLeft, ChevronRight, Search, Filter, Trash2, Edit2 } from 'lucide-react';
+import { Database as DatabaseIcon, Plus, AlertCircle, X, ChevronLeft, ChevronRight, Search, Filter, Trash2, Edit2, ExternalLink } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -36,7 +36,8 @@ export function DumpstersInventory() {
     size: SIZES[0],
     condition: CONDITIONS[0],
     status: STATUSES[0],
-    notes: ''
+    notes: '',
+    location_link: ''
   });
 
   const fetchDumpsters = async () => {
@@ -89,11 +90,14 @@ export function DumpstersInventory() {
     const toastId = toast.loading(editingDumpster ? 'Updating dumpster...' : 'Adding dumpster...');
 
     try {
+      const payload: any = { ...formData };
+      if (payload.location_link === '') payload.location_link = null;
+
       if (editingDumpster) {
         const { error } = await supabase
           .from('dumpsters')
           .update({
-            ...formData,
+            ...payload,
             updated_at: new Date().toISOString()
           })
           .eq('id', editingDumpster.id);
@@ -103,7 +107,7 @@ export function DumpstersInventory() {
         const { error } = await supabase
           .from('dumpsters')
           .insert([{
-            ...formData,
+            ...payload,
             tenant_id: profile.tenant_id
           }]);
         if (error) throw error;
@@ -112,7 +116,7 @@ export function DumpstersInventory() {
 
       setIsModalOpen(false);
       setEditingDumpster(null);
-      setFormData({ size: SIZES[0], condition: CONDITIONS[0], status: STATUSES[0], notes: '' });
+      setFormData({ size: SIZES[0], condition: CONDITIONS[0], status: STATUSES[0], notes: '', location_link: '' });
       fetchDumpsters();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save dumpster', { id: toastId });
@@ -127,7 +131,8 @@ export function DumpstersInventory() {
       size: dumpster.size,
       condition: dumpster.condition,
       status: dumpster.status,
-      notes: dumpster.notes || ''
+      notes: dumpster.notes || '',
+      location_link: (dumpster as any).location_link || ''
     });
     setIsModalOpen(true);
   };
@@ -164,7 +169,7 @@ export function DumpstersInventory() {
         <button 
           onClick={() => {
             setEditingDumpster(null);
-            setFormData({ size: SIZES[0], condition: CONDITIONS[0], status: STATUSES[0], notes: '' });
+            setFormData({ size: SIZES[0], condition: CONDITIONS[0], status: STATUSES[0], notes: '', location_link: '' });
             setIsModalOpen(true);
           }}
           className="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors"
@@ -244,6 +249,7 @@ export function DumpstersInventory() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Condition</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
@@ -275,6 +281,20 @@ export function DumpstersInventory() {
                     )}>
                       {dumpster.status}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {(dumpster as any).location_link ? (
+                      <a
+                        href={(dumpster as any).location_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Open <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
@@ -369,6 +389,17 @@ export function DumpstersInventory() {
                 >
                   {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Location Link</label>
+                <input
+                  type="url"
+                  placeholder="https://maps.google.com/?q=…"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                  value={formData.location_link}
+                  onChange={(e) => setFormData({ ...formData, location_link: e.target.value })}
+                />
+                <p className="mt-1 text-xs text-gray-500">Optional Google Maps (or any) URL pointing at the dumpster's current location.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
