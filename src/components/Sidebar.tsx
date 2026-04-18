@@ -1,12 +1,12 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Truck, 
-  Users, 
-  UserSquare2, 
-  History, 
-  CreditCard, 
+import {
+  LayoutDashboard,
+  Truck,
+  Users,
+  UserSquare2,
+  History,
+  CreditCard,
   LogOut,
   Menu,
   X,
@@ -15,7 +15,8 @@ import {
   Map as MapIcon,
   Trash2,
   FileText,
-  Shield
+  Shield,
+  Radio
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -32,6 +33,7 @@ const navigationGroups = [
   {
     title: 'Operations',
     items: [
+      { name: 'Dispatch', href: '/dispatch', icon: Radio, roles: ['admin', 'dispatcher'] },
       { name: 'Dispatch Grid', href: '/loads', icon: Truck },
       { name: 'Dumpyards', href: '/dumpyards', icon: Trash2, roles: ['admin', 'dispatcher'] },
     ]

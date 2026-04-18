@@ -16,7 +16,8 @@ import { Layout as DashboardLayout } from './components/Layout';
 import { Dashboard as Overview } from './features/overview/pages/Dashboard';
 import { DispatchGrid as Loads } from './features/operations/pages/DispatchGrid';
 import { LoadDetails } from './features/operations/pages/LoadDetails';
-import { OperativeDirectory as Drivers } from './features/people/pages/OperativeDirectory';
+import { Drivers } from './pages/Drivers';
+import { Dispatch } from './pages/Dispatch';
 import { DumpstersInventory as Dumpsters } from './features/assets/pages/DumpstersInventory';
 import { ClientDirectory as Customers } from './features/customers/pages/ClientDirectory';
 import { Dumpyards } from './features/operations/pages/Dumpyards';
@@ -67,6 +68,14 @@ export default function App() {
                 <Route path="loads" element={<Loads />} />
                 <Route path="loads/:id" element={<LoadDetails />} />
                 <Route path="drivers" element={<Drivers />} />
+                <Route
+                  path="dispatch"
+                  element={
+                    <RoleGuard allowedRoles={['admin', 'dispatcher']}>
+                      <Dispatch />
+                    </RoleGuard>
+                  }
+                />
                 <Route path="dumpsters" element={<Dumpsters />} />
                 <Route path="customers" element={<Customers />} />
                 <Route path="dumpyards" element={<Dumpyards />} />
