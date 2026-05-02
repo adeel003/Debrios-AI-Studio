@@ -234,45 +234,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       completeInitialBoot();
     }, 20_000);
 
-    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+    // onAuthStateChange is the single source of truth for session state.
+    // It fires INITIAL_SESSION on mount with whatever is in storage, then
+    // TOKEN_REFRESHED when the JWT is rotated — removing the separate
+    // getSession() call eliminates the race condition where both paths tried
+    // to fetch the profile concurrently with a potentially expired token.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mountedRef.current) return;
 
-      setSession(initialSession);
-      setUser(initialSession?.user ?? null);
+      // Always sync both session and user — TOKEN_REFRESHED included.
+      // The previous code skipped setUser on TOKEN_REFRESHED, which left user
+      // as null if the refresh was the very first event after a page load.
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
 
-      if (initialSession?.user) {
-        // Skip fetch if profile is already loaded for this user (e.g. hot-reload).
-        if (profileRef.current?.id === initialSession.user.id) {
-          completeInitialBoot();
-          return;
-        }
-        fetchProfile(initialSession.user.id, initialSession.user.email).finally(completeInitialBoot);
-      } else {
-        completeInitialBoot();
-      }
-    }).catch(err => {
-      console.error('[AuthContext] getSession error:', err);
-      if (mountedRef.current) setError('Failed to initialize session. Please try again.');
-      completeInitialBoot();
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      // TOKEN_REFRESHED is pure JWT rotation — the profiles row is unchanged.
-      // Triggering a fetch here was the primary cause of the intermittent hang.
       if (event === 'TOKEN_REFRESHED') {
-        if (mountedRef.current) setSession(newSession);
+        // Token rotation only — profile row is unchanged so no re-fetch needed
+        // unless the profile was never loaded (e.g. the initial fetch failed
+        // because the old token was already expired when INITIAL_SESSION fired).
+        if (newSession?.user && !profileRef.current) {
+          await fetchProfile(newSession.user.id, newSession.user.email, false);
+        }
         completeInitialBoot();
         return;
       }
 
-      if (!mountedRef.current) return;
-
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-
       if (newSession?.user) {
-        const currentProfile = profileRef.current; // live value, not stale closure
+        const currentProfile = profileRef.current;
         const needsFetch =
+          event === 'INITIAL_SESSION' ||
           event === 'SIGNED_IN' ||
           event === 'USER_UPDATED' ||
           !currentProfile ||

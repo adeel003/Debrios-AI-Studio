@@ -28,4 +28,13 @@ export const isSupabaseConfigured = isValidUrl(supabaseUrl) && typeof supabaseAn
 const finalUrl = isValidUrl(supabaseUrl) ? supabaseUrl : 'https://placeholder.supabase.co';
 const finalKey = supabaseAnonKey || 'placeholder';
 
-export const supabase = createClient(finalUrl, finalKey);
+export const supabase = createClient(finalUrl, finalKey, {
+  auth: {
+    // Persist the session in localStorage so it survives page refreshes.
+    persistSession: true,
+    // Automatically refresh the JWT before it expires.
+    autoRefreshToken: true,
+    // Pick up auth tokens embedded in the URL (magic links, OAuth callbacks).
+    detectSessionInUrl: true,
+  },
+});
