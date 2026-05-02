@@ -1,33 +1,28 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Truck, User, AlertCircle, X, ChevronRight,
-  Radio, UserSquare2, Clock, CheckCircle2, XCircle
+  ClipboardList, AlertCircle, X, Play, CheckSquare,
+  XSquare, Truck, UserSquare2, RefreshCw, Loader2, Radio,
 } from 'lucide-react';
-import { cn, formatCurrency } from '../lib/utils';
-import toast from 'react-hot-toast';
-import { useAuth } from '../contexts/AuthContext';
-import { handleError } from '../lib/error-handler';
-import { driverService } from '../services/driver.service';
-import { Driver } from '../types/driver';
-import { supabase } from '../lib/supabase';
 import { format } from 'date-fns';
-import { TableSkeleton } from '../components/ui/Skeleton';
+import { useAuth } from '../contexts/AuthContext';
+import { canManageDispatch } from '../lib/rbac';
+import { AccessDenied } from '../components/ui/AccessDenied';
+import { dispatchService } from '../services/dispatch.service';
+import { driverService } from '../services/driver.service';
+import type { DispatchLoad, DumpsterRow } from '../services/dispatch.service';
+import type { Driver } from '../types/driver';
+import { cn } from '../lib/utils';
 
-interface ActiveLoad {
-  id: string;
-  status: string;
-  load_type: string;
-  load_value: number | null;
-  currency: string | null;
-  created_at: string;
-  dispatched_at: string | null;
-  customer: { name: string; city: string | null } | null;
-  driver: { full_name: string } | null;
-}
+const STATUS_LABELS: Record<string, string> = {
+  scheduled: 'Scheduled',
+  assigned: 'Assigned',
+  en_route: 'En Route',
+  on_site: 'On Site',
+  service_done: 'Service Done',
+  dumpyard_required: 'Dumpyard Required',
+};
 
-const JOB_STATUSES = ['scheduled', 'assigned', 'en_route', 'on_site', 'service_done', 'dumpyard_required'];
-
-const statusColors: Record<string, string> = {
+const STATUS_COLORS: Record<string, string> = {
   scheduled: 'bg-blue-100 text-blue-800',
   assigned: 'bg-indigo-100 text-indigo-800',
   en_route: 'bg-purple-100 text-purple-800',
@@ -36,140 +31,158 @@ const statusColors: Record<string, string> = {
   dumpyard_required: 'bg-cyan-100 text-cyan-800',
 };
 
-const driverStatusColors: Record<string, string> = {
-  available: 'bg-green-100 text-green-800',
-  busy: 'bg-yellow-100 text-yellow-800',
-  off_duty: 'bg-gray-100 text-gray-800',
-};
+const COMPLETABLE = new Set(['assigned', 'en_route', 'on_site', 'service_done', 'dumpyard_required']);
+
+function shortId(id: string): string {
+  return id.slice(-6).toUpperCase();
+}
 
 export function Dispatch() {
   const { profile, appReady } = useAuth();
-  const canAssign = ['admin', 'dispatcher'].includes(profile?.role || '');
+  const role = profile?.role ?? null;
 
-  const [jobs, setJobs] = useState<ActiveLoad[]>([]);
+  const [loads, setLoads] = useState<DispatchLoad[]>([]);
+  const [dumpsters, setDumpsters] = useState<DumpsterRow[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [loadingJobs, setLoadingJobs] = useState(true);
-  const [loadingDrivers, setLoadingDrivers] = useState(true);
+  const [completedToday, setCompletedToday] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Assign flow state
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [isAssigning, setIsAssigning] = useState(false);
+  // Tracks which load IDs have an in-flight RPC so the row dims and buttons hide.
+  const [actionLoading, setActionLoading] = useState<Set<string>>(new Set());
 
-  const fetchJobs = useCallback(async () => {
+  // When non-null, the dispatch-driver picker modal is open for this load ID.
+  const [dispatchingLoadId, setDispatchingLoadId] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
+
+  // loads.dumpster_id has no FK — enrich client-side using a Map keyed on dumpster id.
+  const dumpsterMap = useMemo(
+    () => new Map(dumpsters.map((d) => [d.id, d])),
+    [dumpsters],
+  );
+
+  const fetchData = useCallback(async () => {
     if (!profile?.tenant_id) return;
+    setError(null);
     try {
-      setLoadingJobs(true);
-      const { data, error: err } = await supabase
-        .from('loads')
-        .select('id, status, load_type, load_value, currency, created_at, dispatched_at, customer:customers(name, city), driver:drivers(full_name)')
-        .eq('tenant_id', profile.tenant_id)
-        .in('status', JOB_STATUSES)
-        .order('created_at', { ascending: false });
-
-      if (err) throw err;
-      setJobs((data as ActiveLoad[]) || []);
+      const [boardData, driversData] = await Promise.all([
+        dispatchService.fetchDispatchData(profile.tenant_id),
+        driverService.getTenantDrivers(profile.tenant_id, { page: 0, pageSize: 200 }),
+      ]);
+      setLoads(boardData.loads);
+      setDumpsters(boardData.dumpsters);
+      setCompletedToday(boardData.completedToday);
+      setDrivers(driversData.data);
     } catch (err: any) {
-      handleError(err, 'Dispatch:fetchJobs');
-      setError(err.message);
+      setError(err.message || 'Failed to load dispatch data');
     } finally {
-      setLoadingJobs(false);
-    }
-  }, [profile?.tenant_id]);
-
-  const fetchDrivers = useCallback(async () => {
-    if (!profile?.tenant_id) return;
-    try {
-      setLoadingDrivers(true);
-      const { data } = await driverService.getTenantDrivers(profile.tenant_id, { page: 0, pageSize: 100 });
-      setDrivers(data);
-    } catch (err: any) {
-      handleError(err, 'Dispatch:fetchDrivers');
-    } finally {
-      setLoadingDrivers(false);
+      setLoading(false);
     }
   }, [profile?.tenant_id]);
 
   useEffect(() => {
     if (!appReady || !profile?.tenant_id) return;
-    fetchJobs();
-    fetchDrivers();
+    fetchData();
+  }, [appReady, profile?.tenant_id, fetchData]);
 
-    const loadsSub = supabase
-      .channel('dispatch-loads')
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'loads',
-        filter: `tenant_id=eq.${profile.tenant_id}`,
-      }, () => fetchJobs())
-      .subscribe();
+  // NOTE: Frontend RBAC guard. All RPC calls use SECURITY DEFINER functions
+  // that enforce tenant isolation server-side — this guard is a UX layer only.
+  if (appReady && !canManageDispatch(role)) {
+    return <AccessDenied />;
+  }
 
-    const driversSub = supabase
-      .channel('dispatch-drivers')
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'drivers',
-        filter: `tenant_id=eq.${profile.tenant_id}`,
-      }, () => fetchDrivers())
-      .subscribe();
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
-    return () => {
-      loadsSub.unsubscribe();
-      driversSub.unsubscribe();
-    };
-  }, [appReady, profile?.tenant_id, fetchJobs, fetchDrivers]);
+  const markRow = (id: string, busy: boolean) => {
+    setActionLoading((prev) => {
+      const next = new Set(prev);
+      busy ? next.add(id) : next.delete(id);
+      return next;
+    });
+  };
 
-  const handleAssignDriver = async (driverId: string) => {
-    if (!selectedJobId) return;
-    setIsAssigning(true);
-    const toastId = toast.loading('Assigning driver…');
+  const runAction = async (
+    loadId: string,
+    action: () => Promise<void>,
+    fallbackMsg: string,
+  ) => {
+    markRow(loadId, true);
+    setActionError(null);
     try {
-      const { error: err } = await supabase
-        .from('loads')
-        .update({
-          driver_id: driverId,
-          status: 'assigned',
-          dispatched_at: new Date().toISOString(),
-        })
-        .eq('id', selectedJobId);
-
-      if (err) throw err;
-
-      toast.success('Driver assigned', { id: toastId });
-      setSelectedJobId(null);
-      fetchJobs();
-      fetchDrivers();
+      await action();
+      await fetchData();
     } catch (err: any) {
-      handleError(err, 'Dispatch:assignDriver');
-      toast.error(err.message || 'Failed to assign driver', { id: toastId });
+      setActionError(err.message || fallbackMsg);
     } finally {
-      setIsAssigning(false);
+      markRow(loadId, false);
     }
   };
 
-  const availableDrivers = drivers.filter(d => d.status === 'available');
-  const scheduledCount = jobs.filter(j => j.status === 'scheduled').length;
-  const assignedCount = jobs.filter(j => j.status === 'assigned').length;
-  const inProgressCount = jobs.filter(j => ['en_route', 'on_site', 'service_done', 'dumpyard_required'].includes(j.status)).length;
+  const handleDispatch = async (driverId: string) => {
+    if (!dispatchingLoadId) return;
+    setAssigning(true);
+    setActionError(null);
+    try {
+      await dispatchService.dispatchJob(dispatchingLoadId, driverId);
+      setDispatchingLoadId(null);
+      await fetchData();
+    } catch (err: any) {
+      setDispatchingLoadId(null);
+      setActionError(err.message || 'Failed to dispatch job');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  // ── Derived state ──────────────────────────────────────────────────────────
+
+  const availableDrivers = drivers.filter((d) => d.status === 'available');
+  const dispatchingLoad = dispatchingLoadId
+    ? (loads.find((l) => l.id === dispatchingLoadId) ?? null)
+    : null;
+  const unassignedCount = loads.filter((l) => l.status === 'scheduled').length;
+  const assignedCount = loads.filter((l) => l.status === 'assigned').length;
+  const inProgressCount = loads.filter((l) =>
+    ['en_route', 'on_site', 'service_done', 'dumpyard_required'].includes(l.status),
+  ).length;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-gray-900">Dispatch</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Dispatch Board</h1>
             <span className="flex items-center gap-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
               <Radio className="h-3 w-3 animate-pulse" />
               Live
             </span>
           </div>
-          <p className="text-gray-500 mt-0.5">Real-time job assignment and fleet tracking.</p>
+          <p className="text-gray-500 mt-0.5">Manage active loads and driver assignments.</p>
         </div>
+        <button
+          onClick={fetchData}
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </button>
       </div>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm text-center">
-          <div className="text-2xl font-bold text-blue-600">{scheduledCount}</div>
+          <div className="text-2xl font-bold text-blue-600">{unassignedCount}</div>
           <div className="text-xs text-gray-500 mt-0.5">Unassigned</div>
         </div>
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm text-center">
@@ -180,188 +193,278 @@ export function Dispatch() {
           <div className="text-2xl font-bold text-purple-600">{inProgressCount}</div>
           <div className="text-xs text-gray-500 mt-0.5">In Progress</div>
         </div>
+        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm text-center">
+          <div className="text-2xl font-bold text-emerald-600">{completedToday}</div>
+          <div className="text-xs text-gray-500 mt-0.5">Done Today</div>
+        </div>
       </div>
 
+      {/* Error banners */}
       {error && (
-        <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded-md flex">
-          <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0" />
-          <p className="ml-3 text-sm text-red-700">{error}</p>
+        <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded-md flex items-start">
+          <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="ml-3 flex-1">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 ml-2">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      {actionError && (
+        <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-md flex items-start">
+          <AlertCircle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="ml-3 flex-1">
+            <p className="text-sm text-amber-800">{actionError}</p>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-amber-400 hover:text-amber-600 ml-2">
+            <X size={16} />
+          </button>
         </div>
       )}
 
-      {/* Main layout: Jobs | Fleet */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Loads table */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900">Active Loads</h2>
+          <span className="text-xs text-gray-400">{loads.length} load{loads.length !== 1 ? 's' : ''}</span>
+        </div>
 
-        {/* Jobs list — 2/3 width */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">Active Jobs</h2>
-            <span className="text-xs text-gray-400">{jobs.length} total</span>
-          </div>
-
-          <div className="overflow-x-auto">
-            {loadingJobs && jobs.length === 0 ? (
-              <div className="p-6"><TableSkeleton cols={4} rows={6} /></div>
-            ) : jobs.length === 0 ? (
-              <div className="py-16 text-center">
-                <div className="flex flex-col items-center max-w-xs mx-auto">
-                  <div className="h-14 w-14 bg-blue-50 rounded-full flex items-center justify-center mb-3">
-                    <Truck className="h-7 w-7 text-blue-400" />
-                  </div>
-                  <h3 className="text-sm font-bold text-gray-900 mb-1">No active jobs</h3>
-                  <p className="text-xs text-gray-500">All jobs are completed or cancelled.</p>
-                </div>
+        {loads.length === 0 ? (
+          <div className="py-16 text-center">
+            <div className="flex flex-col items-center max-w-xs mx-auto">
+              <div className="h-16 w-16 bg-blue-50 rounded-full flex items-center justify-center mb-4">
+                <ClipboardList className="h-8 w-8 text-blue-400" />
               </div>
-            ) : (
-              <table className="min-w-full divide-y divide-gray-100">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                    {canAssign && (
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {jobs.map(job => (
+              <h3 className="text-lg font-bold text-gray-900 mb-1">No active loads</h3>
+              <p className="text-sm text-gray-500">All loads are completed or cancelled.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-100">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Load #</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer / Site</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dumpster</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Driver</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loads.map((load) => {
+                  const rowBusy = actionLoading.has(load.id);
+                  const dumpster = load.dumpster_id ? dumpsterMap.get(load.dumpster_id) : undefined;
+                  return (
                     <tr
-                      key={job.id}
+                      key={load.id}
                       className={cn(
-                        "transition-colors",
-                        selectedJobId === job.id ? "bg-blue-50" : "hover:bg-gray-50"
+                        'transition-colors',
+                        rowBusy ? 'opacity-50 pointer-events-none' : 'hover:bg-gray-50',
                       )}
                     >
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{job.customer?.name ?? '—'}</div>
-                        <div className="text-xs text-gray-400">{job.customer?.city ?? ''}</div>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="text-xs font-mono text-gray-500">#{shortId(load.id)}</span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize', statusColors[job.status])}>
-                          {job.status.replace(/_/g, ' ')}
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="text-xs text-gray-700">{load.load_type}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span
+                          className={cn(
+                            'px-2 py-0.5 rounded-full text-xs font-medium',
+                            STATUS_COLORS[load.status] ?? 'bg-gray-100 text-gray-700',
+                          )}
+                        >
+                          {STATUS_LABELS[load.status] ?? load.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {job.driver ? (
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">
+                          {load.customer?.name ?? '—'}
+                        </div>
+                        {load.site && (
+                          <div className="text-xs text-gray-400">{load.site.site_name}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        {dumpster ? (
+                          <div>
+                            <span className="text-sm font-mono text-gray-700">{dumpster.asset_number}</span>
+                            <div className="text-xs text-gray-400">{dumpster.size}</div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        {load.driver ? (
                           <div className="flex items-center text-sm text-gray-700">
-                            <Truck className="h-3.5 w-3.5 mr-1.5 text-gray-400" />
-                            {job.driver.full_name}
+                            <Truck className="h-3.5 w-3.5 mr-1.5 text-gray-400 flex-shrink-0" />
+                            {load.driver.full_name}
                           </div>
                         ) : (
                           <span className="text-xs text-amber-600 font-medium">Unassigned</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium">
-                        {job.load_value ? formatCurrency(job.load_value, job.currency ?? undefined) : '—'}
+                      <td className="px-4 py-4 whitespace-nowrap text-xs text-gray-400">
+                        {format(new Date(load.created_at), 'MMM d, HH:mm')}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-400">
-                        {format(new Date(job.created_at), 'MMM d, HH:mm')}
-                      </td>
-                      {canAssign && (
-                        <td className="px-6 py-4 whitespace-nowrap text-right">
-                          <button
-                            onClick={() => setSelectedJobId(selectedJobId === job.id ? null : job.id)}
-                            className={cn(
-                              "inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg transition-all",
-                              selectedJobId === job.id
-                                ? "bg-blue-600 text-white"
-                                : "text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200"
+                      <td className="px-4 py-4 whitespace-nowrap text-right">
+                        {rowBusy ? (
+                          <div className="flex items-center justify-end">
+                            <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* scheduled|assigned → dispatch (open driver picker) */}
+                            {(load.status === 'scheduled' || load.status === 'assigned') && (
+                              <button
+                                onClick={() => setDispatchingLoadId(load.id)}
+                                className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all"
+                              >
+                                <Truck className="h-3 w-3" />
+                                {load.status === 'assigned' ? 'Re-dispatch' : 'Dispatch'}
+                              </button>
                             )}
-                          >
-                            <Truck className="h-3 w-3" />
-                            {selectedJobId === job.id ? 'Selected' : 'Assign'}
-                          </button>
-                        </td>
-                      )}
+                            {/* assigned → start */}
+                            {load.status === 'assigned' && (
+                              <button
+                                onClick={() =>
+                                  runAction(load.id, () => dispatchService.startJob(load.id), 'Failed to start job')
+                                }
+                                className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 transition-all"
+                              >
+                                <Play className="h-3 w-3" />
+                                Start
+                              </button>
+                            )}
+                            {/* any active state → complete */}
+                            {COMPLETABLE.has(load.status) && (
+                              <button
+                                onClick={() =>
+                                  runAction(load.id, () => dispatchService.completeJob(load.id), 'Failed to complete job')
+                                }
+                                className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-all"
+                              >
+                                <CheckSquare className="h-3 w-3" />
+                                Complete
+                              </button>
+                            )}
+                            {/* scheduled|assigned → cancel (before driver is en route) */}
+                            {(load.status === 'scheduled' || load.status === 'assigned') && (
+                              <button
+                                onClick={() =>
+                                  runAction(load.id, () => dispatchService.cancelJob(load.id), 'Failed to cancel job')
+                                }
+                                className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-all"
+                              >
+                                <XSquare className="h-3 w-3" />
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </div>
+        )}
+      </div>
 
-        {/* Fleet panel — 1/3 width */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-900">Fleet Status</h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {availableDrivers.length} of {drivers.length} available
-            </p>
-          </div>
-
-          {/* Assign prompt */}
-          {canAssign && selectedJobId && (
-            <div className="mx-4 mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 font-medium flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-              Select an available driver below to assign the job.
-              <button onClick={() => setSelectedJobId(null)} className="ml-auto text-blue-400 hover:text-blue-600">
-                <X className="h-3.5 w-3.5" />
+      {/* Driver picker modal — opens when "Dispatch" is clicked */}
+      {dispatchingLoadId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-lg font-bold text-gray-900">Assign Driver</h2>
+              <button
+                onClick={() => setDispatchingLoadId(null)}
+                disabled={assigning}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
               </button>
             </div>
-          )}
+            <p className="text-sm text-gray-500 mb-4">
+              Load <span className="font-mono font-medium">#{shortId(dispatchingLoadId)}</span> — select an available driver.
+            </p>
 
-          <div className="p-4 space-y-2 max-h-[600px] overflow-y-auto">
-            {loadingDrivers && drivers.length === 0 ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />
-                ))}
+            {/* Warning shown when the load already has a driver assigned.
+                dispatch_job accepts assigned→assigned so this is a real re-assignment. */}
+            {dispatchingLoad?.status === 'assigned' && (
+              <div className="mb-4 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-800">
+                  This load is already assigned to{' '}
+                  <span className="font-medium">
+                    {dispatchingLoad.driver?.full_name ?? 'a driver'}
+                  </span>
+                  . Selecting a new driver will replace the current assignment.
+                </p>
               </div>
-            ) : drivers.length === 0 ? (
+            )}
+
+            {availableDrivers.length === 0 ? (
               <div className="py-10 text-center">
                 <UserSquare2 className="h-10 w-10 text-gray-200 mx-auto mb-2" />
-                <p className="text-xs text-gray-400">No drivers registered.</p>
+                <p className="text-sm text-gray-500 font-medium">No drivers available</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  All drivers are on a job or offline.
+                </p>
               </div>
             ) : (
-              drivers.map(driver => {
-                const isAvailable = driver.status === 'available';
-                const canSelect = canAssign && selectedJobId && isAvailable && !isAssigning;
-
-                return (
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {availableDrivers.map((driver) => (
                   <button
                     key={driver.id}
-                    onClick={() => canSelect && handleAssignDriver(driver.id)}
-                    disabled={!canSelect}
-                    className={cn(
-                      "w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all",
-                      canSelect
-                        ? "border-gray-200 hover:border-blue-400 hover:bg-blue-50 cursor-pointer"
-                        : "border-gray-100 bg-gray-50 cursor-default"
-                    )}
+                    onClick={() => handleDispatch(driver.id)}
+                    disabled={assigning}
+                    className="w-full flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0",
-                        isAvailable ? "bg-green-100" : "bg-gray-100"
-                      )}>
-                        {driver.driver_picture_url ? (
-                          <img src={driver.driver_picture_url} alt={driver.full_name}
-                            className="h-8 w-8 rounded-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <UserSquare2 className={cn("h-4 w-4", isAvailable ? "text-green-600" : "text-gray-400")} />
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">{driver.full_name}</div>
-                        <span className={cn('text-xs font-medium capitalize px-1.5 py-0.5 rounded-full', driverStatusColors[driver.status])}>
-                          {driver.status.replace('_', ' ')}
-                        </span>
-                      </div>
+                    <div className="h-9 w-9 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      {driver.driver_picture_url ? (
+                        <img
+                          src={driver.driver_picture_url}
+                          alt={driver.full_name}
+                          className="h-9 w-9 rounded-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <UserSquare2 className="h-5 w-5 text-green-600" />
+                      )}
                     </div>
-                    {canSelect && (
-                      <ChevronRight className="h-4 w-4 text-blue-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{driver.full_name}</p>
+                      <p className="text-xs text-green-600 font-medium">Available</p>
+                    </div>
+                    {assigning && (
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-400 flex-shrink-0" />
                     )}
                   </button>
-                );
-              })
+                ))}
+              </div>
             )}
+
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <button
+                onClick={() => setDispatchingLoadId(null)}
+                disabled={assigning}
+                className="w-full py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
