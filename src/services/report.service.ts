@@ -96,7 +96,7 @@ function classifyActive(l: ReportLoad, nowMs: number): ExceptionLoad | null {
   if (l.driver_id === null && l.status !== 'scheduled') {
     return { ...l, exceptionType: 'missing_driver', severity: 'critical', ageHours };
   }
-  if (ageHours * 3_600_000 > DELAY_MS) {
+  if (ageHours > DELAY_MS / 3_600_000) {
     return { ...l, exceptionType: 'delayed', severity: 'warning', ageHours };
   }
   if (
@@ -329,7 +329,7 @@ export const reportService = {
           .from('loads')
           .select('*', { count: 'exact', head: true })
           .eq('tenant_id', tenantId)
-          .not('status', 'in', '(completed,cancelled)')
+          .not('status', 'in', '(completed,cancelled,dumpyard_required)')
           .lt('updated_at', delayThreshold),
 
         supabase
@@ -337,7 +337,7 @@ export const reportService = {
           .select('*', { count: 'exact', head: true })
           .eq('tenant_id', tenantId)
           .is('driver_id', null)
-          .not('status', 'in', '(scheduled,completed,cancelled)'),
+          .not('status', 'in', '(scheduled,completed,cancelled,dumpyard_required)'),
 
         supabase
           .from('loads')
@@ -345,7 +345,7 @@ export const reportService = {
           .eq('tenant_id', tenantId)
           .is('dumpster_id', null)
           .in('load_type', ['Pickup', 'Exchange'])
-          .not('status', 'in', '(completed,cancelled)'),
+          .not('status', 'in', '(completed,cancelled,dumpyard_required)'),
 
         supabase
           .from('loads')
