@@ -70,6 +70,7 @@ export function Dispatch() {
   const [timelineLoadId, setTimelineLoadId] = useState<string | null>(null);
   const [timelineEvents, setTimelineEvents] = useState<LoadEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   // loads.dumpster_id has no FK — enrich client-side via Map.
   const dumpsterMap = useMemo(
@@ -152,12 +153,13 @@ export function Dispatch() {
     if (!profile?.tenant_id) return;
     setTimelineLoadId(loadId);
     setTimelineEvents([]);
+    setTimelineError(null);
     setTimelineLoading(true);
     try {
       const events = await dispatchService.fetchLoadTimeline(profile.tenant_id, loadId);
       setTimelineEvents(events);
-    } catch {
-      setTimelineEvents([]);
+    } catch (err: any) {
+      setTimelineError(err.message || 'Failed to load timeline');
     } finally {
       setTimelineLoading(false);
     }
@@ -166,6 +168,7 @@ export function Dispatch() {
   const closeTimeline = () => {
     setTimelineLoadId(null);
     setTimelineEvents([]);
+    setTimelineError(null);
   };
 
   // ── Derived state ──────────────────────────────────────────────────────────
@@ -754,6 +757,12 @@ export function Dispatch() {
               {timelineLoading ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                </div>
+              ) : timelineError ? (
+                <div className="flex flex-col items-center py-12 text-center px-4">
+                  <AlertCircle className="h-8 w-8 text-red-300 mb-2" />
+                  <p className="text-sm font-medium text-gray-700">Could not load timeline</p>
+                  <p className="text-xs text-gray-400 mt-1">{timelineError}</p>
                 </div>
               ) : timelineEvents.length === 0 ? (
                 <div className="text-center py-12">
