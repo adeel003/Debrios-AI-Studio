@@ -16,7 +16,8 @@ import {
   Trash2,
   FileText,
   Shield,
-  Radio
+  Radio,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -48,6 +49,7 @@ const navigationGroups = [
     title: 'People',
     items: [
       { name: 'Drivers', href: '/drivers', icon: UserSquare2 },
+      { name: 'Work Hours', href: '/work-hours', icon: Clock, roles: ['admin', 'dispatcher'] },
       { name: 'Team', href: '/team', icon: Shield, roles: ['admin'] },
     ]
   },

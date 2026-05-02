@@ -10,7 +10,9 @@ import { canManageDispatch } from '../lib/rbac';
 import { AccessDenied } from '../components/ui/AccessDenied';
 import { dispatchService } from '../services/dispatch.service';
 import { driverService } from '../services/driver.service';
+import { workSessionService } from '../services/workSession.service';
 import type { DispatchLoad, DumpsterRow, LoadEvent } from '../services/dispatch.service';
+import type { DriverLiveStatus } from '../services/workSession.service';
 import type { Driver } from '../types/driver';
 import { cn } from '../lib/utils';
 
@@ -66,6 +68,9 @@ export function Dispatch() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
+  // ── Live session status (non-fatal — board works without it) ─────────────
+  const [liveStatusMap, setLiveStatusMap] = useState<Map<string, DriverLiveStatus>>(new Map());
+
   // ── New: timeline drawer ───────────────────────────────────────────────────
   const [timelineLoadId, setTimelineLoadId] = useState<string | null>(null);
   const [timelineEvents, setTimelineEvents] = useState<LoadEvent[]>([]);
@@ -78,19 +83,22 @@ export function Dispatch() {
     [dumpsters],
   );
 
-  // ── Data fetch (unchanged) ─────────────────────────────────────────────────
+  // ── Data fetch ────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     if (!profile?.tenant_id) return;
     setError(null);
     try {
-      const [boardData, driversData] = await Promise.all([
+      const [boardData, driversData, liveStatuses] = await Promise.all([
         dispatchService.fetchDispatchData(profile.tenant_id),
         driverService.getTenantDrivers(profile.tenant_id, { page: 0, pageSize: 200 }),
+        // Non-fatal: live status may not exist yet if migration hasn't run.
+        workSessionService.fetchLiveStatus(profile.tenant_id).catch(() => [] as DriverLiveStatus[]),
       ]);
       setLoads(boardData.loads);
       setDumpsters(boardData.dumpsters);
       setCompletedToday(boardData.completedToday);
       setDrivers(driversData.data);
+      setLiveStatusMap(new Map(liveStatuses.map((s) => [s.driver_id, s])));
     } catch (err: any) {
       setError(err.message || 'Failed to load dispatch data');
     } finally {
@@ -618,11 +626,31 @@ export function Dispatch() {
                         {driver.status.replace('_', ' ')}
                       </p>
                     </div>
-                    {activeLoads.length > 0 && (
-                      <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5 flex-shrink-0">
-                        {activeLoads.length}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {/* Session badge */}
+                      {(() => {
+                        const live = liveStatusMap.get(driver.id);
+                        if (!live) return null;
+                        if (live.on_break)
+                          return (
+                            <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-100 rounded-full px-2 py-0.5">
+                              Break
+                            </span>
+                          );
+                        if (live.clocked_in)
+                          return (
+                            <span className="text-xs font-medium text-green-700 bg-green-50 border border-green-100 rounded-full px-2 py-0.5">
+                              In
+                            </span>
+                          );
+                        return null;
+                      })()}
+                      {activeLoads.length > 0 && (
+                        <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5">
+                          {activeLoads.length}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

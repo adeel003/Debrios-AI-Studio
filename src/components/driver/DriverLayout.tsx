@@ -1,7 +1,7 @@
 import React from 'react';
 import { Outlet, Navigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { Truck, LogOut, User } from 'lucide-react';
+import { Truck, LogOut, User, Clock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { NotificationBell } from '../NotificationBell';
 
@@ -50,7 +50,7 @@ export function DriverLayout() {
 
       {/* Bottom Nav (Mobile Only) */}
       <nav className="bg-white border-t border-gray-200 sticky bottom-0 z-30 sm:hidden">
-        <div className="grid grid-cols-2 h-16">
+        <div className="grid grid-cols-3 h-16">
           <Link
             to="/driver"
             className={cn(
@@ -58,8 +58,18 @@ export function DriverLayout() {
               location.pathname === '/driver' ? "text-blue-600" : "text-gray-500"
             )}
           >
-            <Truck size={24} />
+            <Truck size={22} />
             <span className="text-xs font-medium">My Loads</span>
+          </Link>
+          <Link
+            to="/driver/work"
+            className={cn(
+              "flex flex-col items-center justify-center space-y-1",
+              location.pathname === '/driver/work' ? "text-blue-600" : "text-gray-500"
+            )}
+          >
+            <Clock size={22} />
+            <span className="text-xs font-medium">My Work</span>
           </Link>
           <Link
             to="/driver/profile"
@@ -68,7 +78,7 @@ export function DriverLayout() {
               location.pathname === '/driver/profile' ? "text-blue-600" : "text-gray-500"
             )}
           >
-            <User size={24} />
+            <User size={22} />
             <span className="text-xs font-medium">Profile</span>
           </Link>
         </div>

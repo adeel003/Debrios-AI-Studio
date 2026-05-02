@@ -34,3 +34,23 @@ export function canViewFinancials(role: UserRole | null): boolean {
 export function canManageFinancials(role: UserRole | null): boolean {
   return role === 'admin';
 }
+
+// Dispatch board: see clocked-in / on-break badge per driver.
+export function canViewDriverStatus(role: UserRole | null): boolean {
+  return role === 'admin' || role === 'dispatcher';
+}
+
+// Work Hours report page.
+export function canViewWorkHoursReport(role: UserRole | null): boolean {
+  return role === 'admin' || role === 'dispatcher';
+}
+
+// Drivers may clock in/out and start/end breaks for themselves.
+export function canManageOwnSession(role: UserRole | null): boolean {
+  return role === 'driver';
+}
+
+// Admins may correct (edit) closed sessions retroactively.
+export function canCorrectSessions(role: UserRole | null): boolean {
+  return role === 'admin';
+}

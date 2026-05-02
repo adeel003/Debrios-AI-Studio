@@ -26,12 +26,14 @@ import { AccessControl as Team } from './features/people/pages/AccessControl';
 import { Settings } from './features/admin/pages/Settings';
 import { AuditLogs } from './features/admin/pages/AuditLogs';
 import { Billing as Fees } from './features/finance/pages/Billing';
+import { WorkHours } from './pages/WorkHours';
 
 // Driver Pages
 import { DriverLayout } from './components/driver/DriverLayout';
 import { MyLoads } from './features/driver-app/pages/MyLoads';
 import { DriverLoadDetails } from './features/driver-app/pages/LoadDetails';
 import { DriverProfile } from './features/driver-app/pages/Profile';
+import { Work } from './pages/Work';
 
 // Guards
 import { RoleGuard } from './core/guards/RoleGuard';
@@ -96,13 +98,21 @@ export default function App() {
                   } 
                 />
                 <Route path="audit-logs" element={<AuditLogs />} />
-                <Route 
-                  path="fees" 
+                <Route
+                  path="fees"
                   element={
                     <RoleGuard allowedRoles={['admin']}>
                       <Fees />
                     </RoleGuard>
-                  } 
+                  }
+                />
+                <Route
+                  path="work-hours"
+                  element={
+                    <RoleGuard allowedRoles={['admin', 'dispatcher']}>
+                      <WorkHours />
+                    </RoleGuard>
+                  }
                 />
               </Route>
 
@@ -118,6 +128,7 @@ export default function App() {
                 <Route index element={<MyLoads />} />
                 <Route path="loads/:id" element={<DriverLoadDetails />} />
                 <Route path="profile" element={<DriverProfile />} />
+                <Route path="work" element={<Work />} />
               </Route>
 
               {/* Fallback */}

@@ -205,6 +205,57 @@ export interface Database {
           created_at: string
         }
       }
+      driver_work_sessions: {
+        Row: {
+          id: string
+          tenant_id: string
+          driver_id: string
+          clocked_in_at: string
+          clocked_out_at: string | null
+          break_started_at: string | null
+          total_break_minutes: number
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+      }
+      driver_work_session_events: {
+        Row: {
+          id: string
+          tenant_id: string
+          session_id: string
+          driver_id: string
+          event_type: 'clock_in' | 'clock_out' | 'break_start' | 'break_end' | 'admin_correction'
+          notes: string | null
+          actor_id: string | null
+          created_at: string
+        }
+      }
+      driver_live_status: {
+        Row: {
+          driver_id: string
+          tenant_id: string
+          session_id: string | null
+          clocked_in: boolean
+          on_break: boolean
+          clocked_in_since: string | null
+          break_since: string | null
+          updated_at: string
+        }
+      }
+      driver_load_sessions: {
+        Row: {
+          id: string
+          tenant_id: string
+          load_id: string
+          driver_id: string
+          session_id: string | null
+          outcome: 'in_progress' | 'completed' | 'cancelled'
+          started_at: string
+          ended_at: string | null
+          created_at: string
+        }
+      }
     }
   }
 }
