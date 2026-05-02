@@ -54,3 +54,8 @@ export function canManageOwnSession(role: UserRole | null): boolean {
 export function canCorrectSessions(role: UserRole | null): boolean {
   return role === 'admin';
 }
+
+// Operations, Driver Performance, Dumpster, and Exception reports.
+export function canViewReports(role: UserRole | null): boolean {
+  return role === 'admin' || role === 'dispatcher';
+}

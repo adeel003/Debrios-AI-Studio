@@ -18,6 +18,7 @@ import {
   Shield,
   Radio,
   Clock,
+  BarChart2,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -63,6 +64,12 @@ const navigationGroups = [
     title: 'Finance',
     items: [
       { name: 'Billing', href: '/fees', icon: CreditCard, roles: ['admin'] },
+    ]
+  },
+  {
+    title: 'Reports',
+    items: [
+      { name: 'Reports', href: '/reports', icon: BarChart2, roles: ['admin', 'dispatcher'] },
     ]
   },
   {

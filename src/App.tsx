@@ -27,6 +27,9 @@ import { Settings } from './features/admin/pages/Settings';
 import { AuditLogs } from './features/admin/pages/AuditLogs';
 import { Billing as Fees } from './features/finance/pages/Billing';
 import { WorkHours } from './pages/WorkHours';
+import { ReportsHome } from './pages/reports/ReportsHome';
+import { Operations as OperationsReport } from './pages/reports/Operations';
+import { Exceptions as ExceptionsReport } from './pages/reports/Exceptions';
 
 // Driver Pages
 import { DriverLayout } from './components/driver/DriverLayout';
@@ -111,6 +114,30 @@ export default function App() {
                   element={
                     <RoleGuard allowedRoles={['admin', 'dispatcher']}>
                       <WorkHours />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="reports"
+                  element={
+                    <RoleGuard allowedRoles={['admin', 'dispatcher']}>
+                      <ReportsHome />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="reports/operations"
+                  element={
+                    <RoleGuard allowedRoles={['admin', 'dispatcher']}>
+                      <OperationsReport />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="reports/exceptions"
+                  element={
+                    <RoleGuard allowedRoles={['admin', 'dispatcher']}>
+                      <ExceptionsReport />
                     </RoleGuard>
                   }
                 />
