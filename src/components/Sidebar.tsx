@@ -16,7 +16,8 @@ import {
   Trash2,
   FileText,
   Shield,
-  Radio
+  Radio,
+  BookOpen
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -61,6 +62,7 @@ const navigationGroups = [
     title: 'Finance',
     items: [
       { name: 'Billing', href: '/fees', icon: CreditCard, roles: ['admin'] },
+      { name: 'Dumpster Ledger', href: '/dumpster-ledger', icon: BookOpen, roles: ['admin'] },
     ]
   },
   {

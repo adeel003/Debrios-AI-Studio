@@ -26,6 +26,7 @@ import { AccessControl as Team } from './features/people/pages/AccessControl';
 import { Settings } from './features/admin/pages/Settings';
 import { AuditLogs } from './features/admin/pages/AuditLogs';
 import { Billing as Fees } from './features/finance/pages/Billing';
+import { DumpsterLedger } from './pages/DumpsterLedger';
 
 // Driver Pages
 import { DriverLayout } from './components/driver/DriverLayout';
@@ -96,13 +97,21 @@ export default function App() {
                   } 
                 />
                 <Route path="audit-logs" element={<AuditLogs />} />
-                <Route 
-                  path="fees" 
+                <Route
+                  path="fees"
                   element={
                     <RoleGuard allowedRoles={['admin']}>
                       <Fees />
                     </RoleGuard>
-                  } 
+                  }
+                />
+                <Route
+                  path="dumpster-ledger"
+                  element={
+                    <RoleGuard allowedRoles={['admin']}>
+                      <DumpsterLedger />
+                    </RoleGuard>
+                  }
                 />
               </Route>
 
