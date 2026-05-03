@@ -259,8 +259,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       // TOKEN_REFRESHED is pure JWT rotation — the profiles row is unchanged.
       // Triggering a fetch here was the primary cause of the intermittent hang.
+      // Both session AND user must be synced here: if TOKEN_REFRESHED is the
+      // first event after a page load (expired token refreshed immediately),
+      // skipping setUser leaves user=null until getSession() resolves, which
+      // can cause a spurious redirect to /login.
       if (event === 'TOKEN_REFRESHED') {
-        if (mountedRef.current) setSession(newSession);
+        if (mountedRef.current) {
+          setSession(newSession);
+          setUser(newSession?.user ?? null);
+        }
         completeInitialBoot();
         return;
       }
